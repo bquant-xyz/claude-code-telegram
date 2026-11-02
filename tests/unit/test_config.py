@@ -725,3 +725,17 @@ def test_upload_save_extensions_rejects_invalid(tmp_path, bad):
 def test_upload_save_dir_rejects_unsafe(tmp_path, bad):
     with pytest.raises(ValueError):
         create_test_config(approved_directory=str(tmp_path), upload_save_dir=bad)
+
+
+@pytest.mark.parametrize(
+    "raw", [".pdf,.png", " .PDF , png ", '[".pdf", ".png"]', '[".PDF","png"]']
+)
+def test_upload_save_extensions_from_environment(tmp_path, monkeypatch, raw):
+    """The env var is parsed as a comma list or a JSON list (regression: a comma
+    list made pydantic-settings fail with 'error parsing value' at startup)."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test_token")
+    monkeypatch.setenv("TELEGRAM_BOT_USERNAME", "test_bot")
+    monkeypatch.setenv("APPROVED_DIRECTORY", str(tmp_path))
+    monkeypatch.setenv("UPLOAD_SAVE_EXTENSIONS", raw)
+    settings = Settings(_env_file=None)
+    assert settings.upload_save_extensions == [".pdf", ".png"]
