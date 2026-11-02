@@ -11,10 +11,10 @@ Features:
 import json
 import re
 from pathlib import Path
-from typing import Any, List, Literal, Optional
+from typing import Annotated, Any, List, Literal, Optional
 
 from pydantic import Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from src.utils.constants import (
     DEFAULT_CLAUDE_MAX_COST_PER_REQUEST,
@@ -220,7 +220,9 @@ class Settings(BaseSettings):
     )
     enable_git_integration: bool = Field(True, description="Enable git commands")
     enable_file_uploads: bool = Field(True, description="Enable file upload handling")
-    upload_save_extensions: List[str] = Field(
+    # NoDecode: pydantic-settings would otherwise JSON-decode the env value
+    # before parse_upload_save_extensions runs, rejecting ".pdf,.png".
+    upload_save_extensions: Annotated[List[str], NoDecode] = Field(
         default=[],
         description=(
             "Extra file extensions (for example .pdf) accepted as uploads in agentic "
@@ -405,6 +407,8 @@ class Settings(BaseSettings):
         """Parse comma-separated extensions into lowercase '.ext' form."""
         if v is None:
             return []
+        if isinstance(v, str) and v.strip().startswith("["):
+            v = json.loads(v)
         items = v.split(",") if isinstance(v, str) else list(v)
         exts = []
         for item in items:
