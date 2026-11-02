@@ -102,6 +102,8 @@ Settings loaded from environment variables via Pydantic Settings. Required: `TEL
 
 Agentic platform settings: `AGENTIC_MODE` (default true), `ENABLE_API_SERVER`, `API_SERVER_PORT` (default 8080), `GITHUB_WEBHOOK_SECRET`, `WEBHOOK_API_SECRET`, `ENABLE_SCHEDULER`, `NOTIFICATION_CHAT_IDS`.
 
+Uploads: `ENABLE_FILE_UPLOADS` (default true), `UPLOAD_SAVE_EXTENSIONS` (default empty; extra extensions such as `.pdf` that agentic mode saves to `UPLOAD_SAVE_DIR`, default `.telegram-uploads`, inside `APPROVED_DIRECTORY` and passes to Claude as a path).
+
 Security relaxation (trusted environments only): `DISABLE_SECURITY_PATTERNS` (default false), `DISABLE_TOOL_VALIDATION` (default false).
 
 Interactive tool approval: `INTERACTIVE_TOOL_APPROVAL` (default false), `INTERACTIVE_TOOL_APPROVAL_TOOLS` (default `Bash,Write,Edit`), `INTERACTIVE_TOOL_APPROVAL_TIMEOUT_SECONDS` (default 60), `INTERACTIVE_TOOL_APPROVAL_TIMEOUT_ACTION` (default `deny`).

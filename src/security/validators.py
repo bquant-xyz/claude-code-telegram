@@ -9,7 +9,7 @@ Features:
 
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import structlog
 
@@ -132,11 +132,21 @@ class SecurityValidator:
     ]
 
     def __init__(
-        self, approved_directory: Path, disable_security_patterns: bool = False
+        self,
+        approved_directory: Path,
+        disable_security_patterns: bool = False,
+        extra_allowed_extensions: Optional[Iterable[str]] = None,
     ):
-        """Initialize validator with approved directory."""
+        """Initialize validator with approved directory.
+
+        ``extra_allowed_extensions`` (from UPLOAD_SAVE_EXTENSIONS) are accepted by
+        ``validate_filename`` in addition to ``ALLOWED_EXTENSIONS``.
+        """
         self.approved_directory = approved_directory.resolve()
         self.disable_security_patterns = disable_security_patterns
+        self.allowed_extensions = set(self.ALLOWED_EXTENSIONS) | {
+            e.lower() for e in (extra_allowed_extensions or [])
+        }
         logger.info(
             "Security validator initialized",
             approved_directory=str(self.approved_directory),
@@ -257,7 +267,7 @@ class SecurityValidator:
         path_obj = Path(filename)
         ext = path_obj.suffix.lower()
 
-        if ext and ext not in self.ALLOWED_EXTENSIONS:
+        if ext and ext not in self.allowed_extensions:
             logger.warning(
                 "File extension not allowed", filename=filename, extension=ext
             )
@@ -380,7 +390,7 @@ class SecurityValidator:
         """Get summary of security validation rules."""
         return {
             "approved_directory": str(self.approved_directory),
-            "allowed_extensions": sorted(list(self.ALLOWED_EXTENSIONS)),
+            "allowed_extensions": sorted(self.allowed_extensions),
             "forbidden_filenames": sorted(list(self.FORBIDDEN_FILENAMES)),
             "dangerous_patterns_count": len(self.DANGEROUS_PATTERNS),
             "dangerous_file_patterns_count": len(self.DANGEROUS_FILE_PATTERNS),

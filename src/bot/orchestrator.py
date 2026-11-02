@@ -1264,7 +1264,40 @@ class MessageOrchestrator:
         file_handler = features.get_file_handler() if features else None
         prompt: Optional[str] = None
 
-        if file_handler:
+        # Opted-in binary types (UPLOAD_SAVE_EXTENSIONS): save to disk, pass the path
+        ext = Path(document.file_name or "").suffix.lower()
+        if ext and ext in self.settings.upload_save_extensions:
+            from .utils.uploads import resolve_upload_path
+
+            work_dir = Path(
+                context.user_data.get(
+                    "current_directory", self.settings.approved_directory
+                )
+            )
+            try:
+                dest = resolve_upload_path(
+                    work_dir,
+                    self.settings.upload_save_dir,
+                    self.settings.approved_directory,
+                    document.file_name,
+                )
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                file = await document.get_file()
+                await file.download_to_drive(str(dest))
+            except Exception as e:
+                logger.warning("Saving upload failed", error=str(e))
+                await progress_msg.edit_text(f"Could not save the file: {e}")
+                return
+            logger.info("Saved upload", user_id=user_id, path=str(dest))
+            caption = update.message.caption or "Please review this file:"
+            prompt = (
+                f"{caption}\n\nThe user uploaded `{document.file_name}` "
+                f"({document.file_size} bytes). It was saved to `{dest}`. "
+                "Open it from there with suitable tools."
+            )
+            file_handler = None
+
+        if file_handler and prompt is None:
             try:
                 processed_file = await file_handler.handle_document_upload(
                     document,
@@ -1275,7 +1308,7 @@ class MessageOrchestrator:
             except Exception:
                 file_handler = None
 
-        if not file_handler:
+        if not file_handler and prompt is None:
             file = await document.get_file()
             file_bytes = await file.download_as_bytearray()
             try:
