@@ -698,3 +698,30 @@ def test_configuration_error_handling():
                 "APPROVED_DIRECTORY",
             ]:
                 os.environ.pop(key, None)
+
+
+def test_upload_save_extensions_default_empty(tmp_path):
+    """Binary uploads are off unless configured."""
+    settings = create_test_config(approved_directory=str(tmp_path))
+    assert settings.upload_save_extensions == []
+    assert settings.upload_save_dir == ".telegram-uploads"
+
+
+def test_upload_save_extensions_parsing(tmp_path):
+    """Comma-separated extensions are normalised to lowercase '.ext'."""
+    settings = create_test_config(
+        approved_directory=str(tmp_path), upload_save_extensions=" .PDF, png ,,cif"
+    )
+    assert settings.upload_save_extensions == [".pdf", ".png", ".cif"]
+
+
+@pytest.mark.parametrize("bad", [".p/df", "../x", ".toolongextension"])
+def test_upload_save_extensions_rejects_invalid(tmp_path, bad):
+    with pytest.raises(ValueError):
+        create_test_config(approved_directory=str(tmp_path), upload_save_extensions=bad)
+
+
+@pytest.mark.parametrize("bad", ["/abs/uploads", "../uploads", "a/../../b", " "])
+def test_upload_save_dir_rejects_unsafe(tmp_path, bad):
+    with pytest.raises(ValueError):
+        create_test_config(approved_directory=str(tmp_path), upload_save_dir=bad)

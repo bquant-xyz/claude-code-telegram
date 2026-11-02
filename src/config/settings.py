@@ -9,6 +9,7 @@ Features:
 """
 
 import json
+import re
 from pathlib import Path
 from typing import Any, List, Literal, Optional
 
@@ -219,6 +220,21 @@ class Settings(BaseSettings):
     )
     enable_git_integration: bool = Field(True, description="Enable git commands")
     enable_file_uploads: bool = Field(True, description="Enable file upload handling")
+    upload_save_extensions: List[str] = Field(
+        default=[],
+        description=(
+            "Extra file extensions (for example .pdf) accepted as uploads in agentic "
+            "mode. Such files are saved to UPLOAD_SAVE_DIR and Claude is given the "
+            "path instead of inlined text. Empty keeps text-only uploads."
+        ),
+    )
+    upload_save_dir: str = Field(
+        ".telegram-uploads",
+        description=(
+            "Directory for saved uploads, relative to the current working directory "
+            "and kept inside APPROVED_DIRECTORY"
+        ),
+    )
     enable_voice_messages: bool = Field(
         True, description="Enable voice message transcription"
     )
@@ -382,6 +398,34 @@ class Settings(BaseSettings):
         if isinstance(v, list):
             return [str(tool) for tool in v]
         return v  # type: ignore[no-any-return]
+
+    @field_validator("upload_save_extensions", mode="before")
+    @classmethod
+    def parse_upload_save_extensions(cls, v: Any) -> List[str]:
+        """Parse comma-separated extensions into lowercase '.ext' form."""
+        if v is None:
+            return []
+        items = v.split(",") if isinstance(v, str) else list(v)
+        exts = []
+        for item in items:
+            ext = str(item).strip().lower()
+            if not ext:
+                continue
+            if not ext.startswith("."):
+                ext = "." + ext
+            if not re.fullmatch(r"\.[a-z0-9]{1,10}", ext):
+                raise ValueError(f"Invalid upload extension: {item!r}")
+            exts.append(ext)
+        return exts
+
+    @field_validator("upload_save_dir")
+    @classmethod
+    def validate_upload_save_dir(cls, v: str) -> str:
+        """Require a relative path without '..' components."""
+        p = Path(v)
+        if not v.strip() or p.is_absolute() or ".." in p.parts:
+            raise ValueError("UPLOAD_SAVE_DIR must be a relative path without '..'")
+        return v
 
     @field_validator("approved_directory")
     @classmethod

@@ -147,6 +147,13 @@ ENABLE_GIT_INTEGRATION=true
 # Enable file upload handling
 ENABLE_FILE_UPLOADS=true
 
+# Extra upload types, agentic mode (comma-separated, e.g. .pdf,.png). Empty keeps
+# text-only uploads. Matching files are saved under UPLOAD_SAVE_DIR (relative to the
+# current working directory, always inside APPROVED_DIRECTORY) and Claude is told the
+# path instead of receiving inlined text.
+UPLOAD_SAVE_EXTENSIONS=
+UPLOAD_SAVE_DIR=.telegram-uploads
+
 # Enable quick action buttons (classic mode)
 ENABLE_QUICK_ACTIONS=true
 

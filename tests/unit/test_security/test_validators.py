@@ -349,3 +349,19 @@ class TestSecurityValidator:
         assert "  " not in sanitized  # No double spaces
         assert not sanitized.startswith(" ")  # No leading space
         assert not sanitized.endswith(" ")  # No trailing space
+
+
+def test_pdf_rejected_by_default(tmp_path):
+    """.pdf is not in the built-in upload allowlist."""
+    validator = SecurityValidator(tmp_path)
+    valid, error = validator.validate_filename("paper.pdf")
+    assert not valid
+    assert ".pdf" in error
+
+
+def test_extra_allowed_extensions_accept_pdf(tmp_path):
+    """UPLOAD_SAVE_EXTENSIONS extends the allowlist without relaxing other checks."""
+    validator = SecurityValidator(tmp_path, extra_allowed_extensions=[".pdf"])
+    assert validator.validate_filename("paper.pdf") == (True, None)
+    assert not validator.validate_filename(".hidden.pdf")[0]
+    assert not validator.validate_filename("tool.exe")[0]

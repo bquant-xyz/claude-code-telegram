@@ -1166,3 +1166,74 @@ async def test_agentic_text_does_not_say_stopped_twice(agentic_settings, deps):
     assert "No final response. Tools used: Bash, Read" in body
     assert "turn limit reached after 10 turns" in body
     assert body.count("⚠️") == 1
+
+
+async def test_agentic_document_saves_opted_in_binary_and_passes_path(tmp_dir, deps):
+    """With UPLOAD_SAVE_EXTENSIONS=.pdf a PDF is saved to disk and Claude gets the path."""
+    settings = create_test_config(
+        approved_directory=str(tmp_dir),
+        agentic_mode=True,
+        upload_save_extensions=".pdf",
+    )
+    orchestrator = MessageOrchestrator(settings, deps)
+
+    async def fake_download(path: str) -> None:
+        Path(path).write_bytes(b"%PDF-1.7 test")
+
+    tg_file = MagicMock()
+    tg_file.download_to_drive = AsyncMock(side_effect=fake_download)
+    tg_file.download_as_bytearray = AsyncMock()
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.message.document.file_name = "../paper.pdf"
+    update.message.document.file_size = 1024
+    update.message.document.get_file = AsyncMock(return_value=tg_file)
+    update.message.caption = "Read this"
+    update.message.chat.send_action = AsyncMock()
+    progress = MagicMock()
+    progress.edit_text = AsyncMock()
+    progress.delete = AsyncMock()
+    update.message.reply_text = AsyncMock(return_value=progress)
+
+    claude = MagicMock()
+    claude.run_command = AsyncMock(side_effect=RuntimeError("stop after prompt"))
+    context = MagicMock()
+    context.bot_data = {"security_validator": None, "claude_integration": claude}
+    context.user_data = {}
+
+    await orchestrator.agentic_document(update, context)
+
+    saved = list((tmp_dir / ".telegram-uploads").iterdir())
+    assert len(saved) == 1 and saved[0].name.endswith("_paper.pdf")
+    assert saved[0].read_bytes() == b"%PDF-1.7 test"
+    tg_file.download_as_bytearray.assert_not_called()
+    prompt = claude.run_command.call_args.kwargs["prompt"]
+    assert prompt.startswith("Read this")
+    assert str(saved[0]) in prompt
+
+
+async def test_agentic_document_binary_not_saved_by_default(agentic_settings, deps):
+    """Without UPLOAD_SAVE_EXTENSIONS nothing is written to disk."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+    tg_file = MagicMock()
+    tg_file.download_to_drive = AsyncMock()
+    tg_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"\xff\xfe\x00"))
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.message.document.file_name = "paper.pdf"
+    update.message.document.file_size = 1024
+    update.message.document.get_file = AsyncMock(return_value=tg_file)
+    update.message.chat.send_action = AsyncMock()
+    progress = MagicMock()
+    progress.edit_text = AsyncMock()
+    update.message.reply_text = AsyncMock(return_value=progress)
+    context = MagicMock()
+    context.bot_data = {"security_validator": None}
+    context.user_data = {}
+
+    await orchestrator.agentic_document(update, context)
+
+    tg_file.download_to_drive.assert_not_called()
+    assert "Unsupported file format" in progress.edit_text.call_args.args[0]
