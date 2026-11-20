@@ -1275,3 +1275,121 @@ def _escape_markdown(text: str) -> str:
     Legacy name kept for compatibility with callers; actually escapes HTML.
     """
     return escape_html(text)
+
+
+async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /login - relay ``claude auth login`` so the user can sign in remotely.
+
+    ``/login`` starts the CLI and sends the sign-in link; ``/login <code>`` passes
+    the code shown after signing in; ``/login cancel`` aborts. Works while Claude
+    itself is logged out, because no Claude call is involved.
+
+    Auth: protected by the auth middleware (group -2), like /restart. The message
+    with the code is deleted at once, and the code is never logged or audited.
+    """
+    from ..features.claude_login import (
+        CODE_RE,
+        auth_status,
+        find_claude_cli,
+        login_manager,
+    )
+
+    message = update.effective_message
+    user_id = update.effective_user.id
+    audit_logger: Optional[AuditLogger] = context.bot_data.get("audit_logger")
+    settings: Optional[Settings] = context.bot_data.get("settings")
+    args = context.args or []
+
+    if update.edited_message is not None:
+        # An edited message may now hold a code: remove it, but never act on it.
+        try:
+            await message.delete()
+            note = "Edited /login messages are ignored and deleted."
+        except Exception:
+            note = "Edited /login messages are ignored. Please delete it yourself."
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, text=f"⚠️ {note} Send a new /login."
+        )
+        return
+
+    if update.effective_chat is None or update.effective_chat.type != "private":
+        await message.reply_text("🔒 /login only works in a private chat with the bot.")
+        return
+
+    if args and args[0].lower() == "cancel":
+        cancelled = await login_manager.cancel(user_id)
+        await message.reply_text(
+            "Login cancelled." if cancelled else "No login in progress."
+        )
+        return
+
+    cli_path = find_claude_cli(settings.claude_cli_path if settings else None)
+    if cli_path is None:
+        await message.reply_text("❌ Claude CLI not found on the server.")
+        return
+
+    if not args:
+        try:
+            url = await login_manager.start(user_id, cli_path)
+        except Exception as e:
+            logger.warning("Claude login start failed", user_id=user_id, error=str(e))
+            await message.reply_text(
+                f"❌ Could not start the login: {escape_html(str(e))}"
+            )
+            return
+        if audit_logger:
+            await audit_logger.log_command(user_id, "login", ["start"], True)
+        logger.info("Claude login started via /login", user_id=user_id)
+        await message.reply_text(
+            "🔑 <b>Claude login</b>\n\n"
+            f'1. Open <a href="{escape_html(url)}">this sign-in link</a> and approve.\n'
+            "2. Copy the code shown at the end.\n"
+            "3. Send <code>/login &lt;code&gt;</code> here within 10 minutes.\n\n"
+            "Your message with the code is deleted straight away. "
+            "<code>/login cancel</code> aborts.",
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+        return
+
+    # A code was sent: remove it from the chat before doing anything else.
+    code = args[0].strip()
+    try:
+        await message.delete()
+    except Exception:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="⚠️ Could not delete your message with the code; please delete it.",
+        )
+
+    async def reply(text: str) -> None:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, text=text, parse_mode="HTML"
+        )
+
+    if len(args) != 1 or not CODE_RE.match(code):
+        await reply(
+            "❌ That does not look like a login code. Send /login to start over."
+        )
+        return
+
+    try:
+        ok, output = await login_manager.submit(user_id, code)
+    except LookupError:
+        await reply("No login in progress (or it timed out). Send /login first.")
+        return
+
+    logged_in = await auth_status(cli_path)
+    # Trust `claude auth status` first: the CLI may save credentials but exit late.
+    success = logged_in is True or (ok and logged_in is None)
+    if audit_logger:
+        await audit_logger.log_command(user_id, "login", ["submit"], success)
+    logger.info("Claude login finished via /login", user_id=user_id, success=success)
+    if success:
+        await reply("✅ <b>Claude login succeeded.</b> New requests use the new login.")
+    else:
+        await reply(
+            "❌ <b>Claude login failed.</b>\n\n"
+            f"<pre>{escape_html(output or 'no output')}</pre>\n"
+            "Send /login to try again."
+        )

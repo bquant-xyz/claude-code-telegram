@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import logging
+import re
 import signal
 import sys
 from pathlib import Path
@@ -38,6 +39,39 @@ from src.security.validators import SecurityValidator
 from src.storage.facade import Storage
 from src.storage.session_storage import SQLiteSessionStorage
 
+_TOKEN_RE = re.compile(r"bot\d{5,}:[A-Za-z0-9_-]{20,}")
+
+
+class RedactTelegramTokenFilter(logging.Filter):
+    """Mask Telegram bot tokens (they appear in Bot API URLs) in every log record."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except Exception:
+            # Malformed %-args: let logging's own error handling report it rather
+            # than raising into the caller, but mask the parts it will print.
+            message = None
+            try:
+                record.msg = _TOKEN_RE.sub("bot<redacted>", str(record.msg))
+                if isinstance(record.args, tuple):
+                    record.args = tuple(
+                        _TOKEN_RE.sub("bot<redacted>", str(a)) for a in record.args
+                    )
+            except Exception:
+                pass
+        try:
+            if message is not None and _TOKEN_RE.search(message):
+                record.msg = _TOKEN_RE.sub("bot<redacted>", message)
+                record.args = ()
+            if record.exc_info and not record.exc_text:
+                record.exc_text = logging.Formatter().formatException(record.exc_info)
+            if record.exc_text:
+                record.exc_text = _TOKEN_RE.sub("bot<redacted>", record.exc_text)
+        except Exception:
+            pass
+        return True
+
 
 def setup_logging(debug: bool = False) -> None:
     """Configure structured logging."""
@@ -49,6 +83,13 @@ def setup_logging(debug: bool = False) -> None:
         format="%(message)s",
         stream=sys.stdout,
     )
+
+    # httpx logs every request URL at INFO, and Bot API URLs contain the bot
+    # token. Keep those loggers quiet and mask tokens in anything that remains.
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(max(level, logging.WARNING))
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(RedactTelegramTokenFilter())
 
     # Configure structlog
     structlog.configure(
