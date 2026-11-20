@@ -87,16 +87,21 @@ class ClaudeLoginSession:
         # Never try to open a local browser: the user signs in on their own device.
         env.update({"BROWSER": "/bin/false", "DISPLAY": "", "TERM": "dumb"})
         env.pop("WAYLAND_DISPLAY", None)
-        self.proc = subprocess.Popen(
-            [self.cli_path, "auth", "login"],
-            stdin=slave,
-            stdout=slave,
-            stderr=slave,
-            env=env,
-            start_new_session=True,
-            close_fds=True,
-        )
-        os.close(slave)
+        try:
+            self.proc = subprocess.Popen(
+                [self.cli_path, "auth", "login"],
+                stdin=slave,
+                stdout=slave,
+                stderr=slave,
+                env=env,
+                start_new_session=True,
+                close_fds=True,
+            )
+        except BaseException:
+            os.close(master)
+            raise
+        finally:
+            os.close(slave)
         self.master_fd = master
 
     def _read_until(self, pattern: "re.Pattern[str]", timeout_s: float) -> bool:
@@ -133,7 +138,7 @@ class ClaudeLoginSession:
         try:
             return await asyncio.to_thread(self._start_blocking)
         except Exception:
-            self.close()
+            await self.aclose()
             raise
 
     def _submit_blocking(self, code: str) -> Tuple[bool, str]:
@@ -146,9 +151,7 @@ class ClaudeLoginSession:
             rc = self.proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             rc = None
-        tail = strip_ansi(self.output[mark:]).replace(code, "[code]")
-        lines = [ln.strip() for ln in tail.splitlines() if ln.strip()]
-        summary = "\n".join(lines[-5:])[:800]
+        summary = redact_code(strip_ansi(self.output[mark:]), code)
         return rc == 0, summary
 
     async def submit(self, code: str) -> Tuple[bool, str]:
@@ -156,9 +159,10 @@ class ClaudeLoginSession:
         try:
             return await asyncio.to_thread(self._submit_blocking, code)
         finally:
-            self.close()
+            await self.aclose()
 
     def close(self) -> None:
+        """Stop the CLI and release the terminal (blocking: up to ~5 s)."""
         if self.proc is not None and self.proc.poll() is None:
             try:
                 os.killpg(self.proc.pid, signal.SIGTERM)
@@ -168,12 +172,39 @@ class ClaudeLoginSession:
                     os.killpg(self.proc.pid, signal.SIGKILL)
                 except (ProcessLookupError, PermissionError):
                     pass
+                try:
+                    self.proc.wait(timeout=2)  # reap, so no zombie is left
+                except subprocess.TimeoutExpired:
+                    pass
         if self.master_fd is not None:
             try:
                 os.close(self.master_fd)
             except OSError:
                 pass
             self.master_fd = None
+
+    async def aclose(self) -> None:
+        """Like close(), without blocking the event loop."""
+        await asyncio.to_thread(self.close)
+
+
+def redact_code(text: str, code: str, chunk: int = 10) -> str:
+    """Summarise CLI output with the code removed, including split echoes of it.
+
+    Lines containing the code or any ``chunk``-character piece of it (an echo
+    broken up by escape sequences or wrapping) are dropped entirely.
+    """
+    pieces = {code[i : i + chunk] for i in range(max(1, len(code) - chunk + 1))}
+    kept = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if code in line or any(p and p in line for p in pieces):
+            kept.append("[line with the code hidden]")
+        else:
+            kept.append(line)
+    return "\n".join(kept[-5:])[:800]
 
 
 async def auth_status(cli_path: str) -> Optional[bool]:
@@ -195,37 +226,57 @@ async def auth_status(cli_path: str) -> Optional[bool]:
 
 
 class ClaudeLoginManager:
-    """Keeps at most one pending login per Telegram user."""
+    """Keeps at most one pending login per Telegram user and expires it on time."""
 
-    def __init__(self) -> None:
+    def __init__(self, timeout_s: float = SESSION_TIMEOUT_S) -> None:
+        self.timeout_s = timeout_s
         self._sessions: dict[int, ClaudeLoginSession] = {}
+        self._timers: dict[int, asyncio.TimerHandle] = {}
+        self._tasks: "set[asyncio.Future[None]]" = set()  # pending expiry cleanups
 
-    def get(self, user_id: int) -> Optional[ClaudeLoginSession]:
+    def _forget(self, user_id: int) -> Optional[ClaudeLoginSession]:
+        timer = self._timers.pop(user_id, None)
+        if timer:
+            timer.cancel()
+        return self._sessions.pop(user_id, None)
+
+    async def get(self, user_id: int) -> Optional[ClaudeLoginSession]:
         session = self._sessions.get(user_id)
         if session and (session.expired or not session.alive):
-            self.cancel(user_id)
+            await self.cancel(user_id)
             return None
         return session
 
-    def cancel(self, user_id: int) -> bool:
-        session = self._sessions.pop(user_id, None)
+    async def cancel(self, user_id: int) -> bool:
+        session = self._forget(user_id)
         if session:
-            session.close()
+            await session.aclose()
             return True
         return False
 
+    def _expire(self, user_id: int, session: ClaudeLoginSession) -> None:
+        if self._sessions.get(user_id) is session:
+            self._forget(user_id)
+            task = asyncio.ensure_future(session.aclose())
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+            logger.info("Claude login expired", user_id=user_id)
+
     async def start(self, user_id: int, cli_path: str) -> str:
-        self.cancel(user_id)
-        session = ClaudeLoginSession(cli_path)
+        await self.cancel(user_id)
+        session = ClaudeLoginSession(cli_path, timeout_s=self.timeout_s)
         url = await session.start()
         self._sessions[user_id] = session
+        self._timers[user_id] = asyncio.get_running_loop().call_later(
+            self.timeout_s, self._expire, user_id, session
+        )
         return url
 
     async def submit(self, user_id: int, code: str) -> Tuple[bool, str]:
-        session = self.get(user_id)
+        session = await self.get(user_id)
         if session is None:
             raise LookupError("no login in progress")
-        self._sessions.pop(user_id, None)
+        self._forget(user_id)
         return await session.submit(code)
 
 

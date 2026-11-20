@@ -1294,18 +1294,30 @@ async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         login_manager,
     )
 
-    message = update.message
+    message = update.effective_message
     user_id = update.effective_user.id
     audit_logger: Optional[AuditLogger] = context.bot_data.get("audit_logger")
     settings: Optional[Settings] = context.bot_data.get("settings")
     args = context.args or []
+
+    if update.edited_message is not None:
+        # An edited message may now hold a code: remove it, but never act on it.
+        try:
+            await message.delete()
+            note = "Edited /login messages are ignored and deleted."
+        except Exception:
+            note = "Edited /login messages are ignored. Please delete it yourself."
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, text=f"⚠️ {note} Send a new /login."
+        )
+        return
 
     if update.effective_chat is None or update.effective_chat.type != "private":
         await message.reply_text("🔒 /login only works in a private chat with the bot.")
         return
 
     if args and args[0].lower() == "cancel":
-        cancelled = login_manager.cancel(user_id)
+        cancelled = await login_manager.cancel(user_id)
         await message.reply_text(
             "Login cancelled." if cancelled else "No login in progress."
         )
@@ -1368,7 +1380,8 @@ async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     logged_in = await auth_status(cli_path)
-    success = ok and logged_in is not False
+    # Trust `claude auth status` first: the CLI may save credentials but exit late.
+    success = logged_in is True or (ok and logged_in is None)
     if audit_logger:
         await audit_logger.log_command(user_id, "login", ["submit"], success)
     logger.info("Claude login finished via /login", user_id=user_id, success=success)
