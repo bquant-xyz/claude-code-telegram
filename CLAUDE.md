@@ -132,7 +132,11 @@ All datetimes use timezone-aware UTC: `datetime.now(UTC)` (not `datetime.utcnow(
 
 ### Agentic mode
 
-Agentic mode commands: `/start`, `/new`, `/status`, `/verbose`, `/repo`. If `ENABLE_PROJECT_THREADS=true`: `/sync_threads`. To add a new command:
+Agentic mode commands: `/start`, `/new`, `/status`, `/verbose`, `/repo`, `/restart`, `/login`. If `ENABLE_PROJECT_THREADS=true`: `/sync_threads`.
+
+`/login` (both modes, `src/bot/handlers/command.py` + `src/bot/features/claude_login.py`) relays `claude auth login` through a pseudo-terminal so an allowed user can re-authenticate the Claude CLI remotely: `/login` sends the sign-in URL, `/login <code>` submits the code (the message is deleted; the code is never logged, audited or pattern-checked), `/login cancel` aborts. Private chats only; pending logins expire after 10 minutes.
+
+To add a new command:
 
 1. Add handler function in `src/bot/orchestrator.py`
 2. Register in `MessageOrchestrator._register_agentic_handlers()`

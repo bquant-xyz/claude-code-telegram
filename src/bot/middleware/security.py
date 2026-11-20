@@ -9,6 +9,12 @@ from ..utils.html_format import escape_html
 logger = structlog.get_logger()
 
 
+def is_login_command(text: str) -> bool:
+    """True for ``/login`` and ``/login@BotName`` messages (they may carry a secret)."""
+    head = text.lstrip().split(maxsplit=1)[0] if text.strip() else ""
+    return head.split("@", 1)[0].lower() == "/login"
+
+
 async def security_middleware(
     handler: Callable, event: Any, data: Dict[str, Any]
 ) -> Any:
@@ -47,7 +53,9 @@ async def security_middleware(
 
     # Validate text content if present (classic mode only)
     message = event.effective_message
-    if message and message.text and not agentic_mode:
+    # /login carries a one-time Claude auth code: never pattern-check or log it.
+    is_login = bool(message and message.text and is_login_command(message.text))
+    if message and message.text and not agentic_mode and not is_login:
         is_safe, violation_type = await validate_message_content(
             message.text, security_validator, user_id, audit_logger
         )

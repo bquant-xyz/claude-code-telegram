@@ -338,6 +338,7 @@ class MessageOrchestrator:
             ("verbose", self.agentic_verbose),
             ("repo", self.agentic_repo),
             ("restart", command.restart_command),
+            ("login", command.login_command),
         ]
         if self.settings.enable_project_threads:
             handlers.append(("sync_threads", command.sync_threads))
@@ -435,6 +436,7 @@ class MessageOrchestrator:
             ("actions", command.quick_actions),
             ("git", command.git_command),
             ("restart", command.restart_command),
+            ("login", command.login_command),
         ]
         if self.settings.enable_project_threads:
             handlers.append(("sync_threads", command.sync_threads))
@@ -479,6 +481,7 @@ class MessageOrchestrator:
                 BotCommand("verbose", "Set output verbosity (0/1/2)"),
                 BotCommand("repo", "List repos / switch workspace"),
                 BotCommand("restart", "Restart the bot"),
+                BotCommand("login", "Sign Claude in again (remote login)"),
             ]
             if self.settings.enable_project_threads:
                 commands.append(BotCommand("sync_threads", "Sync project topics"))
@@ -499,6 +502,7 @@ class MessageOrchestrator:
                 BotCommand("actions", "Show quick actions"),
                 BotCommand("git", "Git repository commands"),
                 BotCommand("restart", "Restart the bot"),
+                BotCommand("login", "Sign Claude in again (remote login)"),
             ]
             if self.settings.enable_project_threads:
                 commands.append(BotCommand("sync_threads", "Sync project topics"))
